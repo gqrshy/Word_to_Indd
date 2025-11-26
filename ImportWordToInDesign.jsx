@@ -105,12 +105,16 @@ function main() {
         // Word文書をインポート
         var result = importWordDocument(doc, wordFile, hMaster);
 
-        // インポートしたストーリーのみに段落スタイルをマッピング
+        // インポートしたストーリーのみに処理を適用
         if (result.importedStory) {
+            // 段落スタイルをマッピング
             result.stylesApplied = applyStyleMapping(doc, result.importedStory);
 
             // 小項目に□記号を追加（まだない場合）
             result.kokomokuFixed = addKokomokuSymbol(doc, result.importedStory);
+
+            // MS明朝 Bold → BIZ UDゴシック Regular に置換
+            result.fontsReplaced = replaceFonts(result.importedStory);
         }
 
         var endTime = new Date();
@@ -124,6 +128,7 @@ function main() {
         resultMsg += "段落数: " + result.paragraphsImported + "\n";
         resultMsg += "スタイル変換: " + result.stylesApplied + "件\n";
         resultMsg += "小項目□追加: " + result.kokomokuFixed + "件\n";
+        resultMsg += "フォント置換: " + (result.fontsReplaced || 0) + "件\n";
         resultMsg += "処理時間: " + duration.toFixed(1) + "秒";
 
         alert(resultMsg);
@@ -501,6 +506,68 @@ function addKokomokuSymbol(doc, importedStory) {
 
     debugLog("小項目□記号追加完了: " + addCount + "件");
     return addCount;
+}
+
+// フォント置換（インポートしたストーリーのみ）
+// MS明朝 Bold → BIZ UDゴシック Regular
+function replaceFonts(importedStory) {
+    var replaceCount = 0;
+
+    if (!importedStory || !importedStory.isValid) {
+        debugLog("有効なストーリーがありません");
+        return 0;
+    }
+
+    debugLog("=== フォント置換開始（インポートしたストーリーのみ） ===");
+
+    // 置換先フォントを取得
+    var targetFont;
+    try {
+        targetFont = app.fonts.itemByName("BIZ UDGothic\tRegular");
+        if (!targetFont.isValid) {
+            targetFont = app.fonts.itemByName("BIZ UDゴシック\tRegular");
+        }
+    } catch (e) {
+        debugLog("BIZ UDゴシックが見つかりません: " + e.message);
+        return 0;
+    }
+
+    if (!targetFont || !targetFont.isValid) {
+        debugLog("置換先フォントが見つかりません");
+        return 0;
+    }
+
+    debugLog("置換先フォント: " + targetFont.name);
+
+    // テキストを走査してフォントを置換
+    try {
+        var characters = importedStory.characters;
+
+        for (var i = 0; i < characters.length; i++) {
+            try {
+                var char = characters[i];
+                var fontName = char.appliedFont.name;
+
+                // MS明朝 Bold を検出（様々な表記に対応）
+                if (fontName.indexOf("MS") >= 0 && fontName.indexOf("明朝") >= 0 && fontName.indexOf("Bold") >= 0) {
+                    char.appliedFont = targetFont;
+                    replaceCount++;
+                }
+                // ＭＳ 明朝 Bold（全角）
+                else if (fontName.indexOf("ＭＳ") >= 0 && fontName.indexOf("明朝") >= 0 && fontName.indexOf("Bold") >= 0) {
+                    char.appliedFont = targetFont;
+                    replaceCount++;
+                }
+            } catch (e) {
+                // 個別の文字エラーは無視
+            }
+        }
+    } catch (e) {
+        debugLog("フォント置換エラー: " + e.message);
+    }
+
+    debugLog("フォント置換完了: " + replaceCount + "件");
+    return replaceCount;
 }
 
 // 段落数をカウント
