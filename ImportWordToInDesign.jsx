@@ -553,17 +553,17 @@ function replaceFonts(importedStory) {
 
         for (var i = 0; i < characters.length; i++) {
             try {
-                var char = characters[i];
-                var fontName = char.appliedFont.name;
+                var ch = characters[i];
+                var fontName = ch.appliedFont.name;
 
                 // MS明朝 Bold を検出（様々な表記に対応）
                 if (fontName.indexOf("MS") >= 0 && fontName.indexOf("明朝") >= 0 && fontName.indexOf("Bold") >= 0) {
-                    char.appliedFont = targetFont;
+                    ch.appliedFont = targetFont;
                     replaceCount++;
                 }
                 // ＭＳ 明朝 Bold（全角）
                 else if (fontName.indexOf("ＭＳ") >= 0 && fontName.indexOf("明朝") >= 0 && fontName.indexOf("Bold") >= 0) {
-                    char.appliedFont = targetFont;
+                    ch.appliedFont = targetFont;
                     replaceCount++;
                 }
             } catch (e) {
