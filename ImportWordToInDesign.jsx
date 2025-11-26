@@ -1,0 +1,479 @@
+// ImportWordToInDesign.jsx
+// Word文書をInDesignにインポートし、段落スタイルを変換するスクリプト
+// InDesign 2025対応版
+
+#target indesign
+
+// グローバル設定
+var CONFIG = {
+    autoCreatePages: true,
+    maxSpreads: 100,
+
+    // 使用するマスターページ
+    masterPagePrefix: "H",
+    masterPageName: "本文マスター",
+
+    // スタイルマッピング (Word → InDesign)
+    // Wordスタイル名: InDesignスタイル名
+    styleMapping: {
+        // 大項目 → 大見出し1
+        "大項目": "大見出し1",
+
+        // 小項目 → 小項目 (□記号を保持)
+        "小項目": "小項目",
+
+        // 標準 → Normal
+        "Normal": "Normal",
+        "標準": "Normal",
+
+        // 演習タイトル → 演習タイトル
+        "演習タイトル": "演習タイトル"
+    },
+
+    // 小項目の□記号設定
+    kokomokuSymbol: "□　", // □+全角スペース
+
+    // マージン設定(フォールバック用)
+    fallbackMargin: {
+        top: 36,
+        bottom: 36,
+        inside: 54,
+        outside: 36
+    },
+
+    // デバッグモード
+    debugMode: true
+};
+
+// デバッグログ
+function debugLog(message) {
+    if (CONFIG.debugMode) {
+        $.writeln("[DEBUG] " + message);
+    }
+}
+
+// メイン処理
+function main() {
+    if (app.documents.length === 0) {
+        alert("InDesignドキュメントを開いてからスクリプトを実行してください。");
+        return;
+    }
+
+    var doc = app.activeDocument;
+
+    // H-本文マスターの存在確認
+    var hMaster = getMasterPage(doc, CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName);
+    if (!hMaster) {
+        alert("エラー: 「" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "」マスターページが見つかりません。\n\n使用可能なマスターページ:\n" + listMasterPages(doc));
+        return;
+    }
+
+    debugLog("使用マスター: " + hMaster.name);
+
+    // Word文書を選択
+    var wordFile = File.openDialog("インポートするWord文書を選択してください (.docx)", "*.docx");
+    if (!wordFile) {
+        return;
+    }
+
+    // 確認ダイアログ
+    var confirmMsg = "Word文書をインポートします\n\n";
+    confirmMsg += "【段落スタイル変換】\n";
+    confirmMsg += "・大項目 → 大見出し1\n";
+    confirmMsg += "・小項目 → 小項目 (□記号保持)\n";
+    confirmMsg += "・標準/Normal → Normal\n";
+    confirmMsg += "・演習タイトル → 演習タイトル\n\n";
+    confirmMsg += "【マスターページ】\n";
+    confirmMsg += "・" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "\n\n";
+    confirmMsg += "実行しますか?";
+
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    try {
+        app.scriptPreferences.enableRedraw = false;
+
+        var startTime = new Date();
+
+        // 現在のページ数を記録
+        var initialPageCount = doc.pages.length;
+
+        // Word文書をインポート
+        var result = importWordDocument(doc, wordFile, hMaster);
+
+        // 段落スタイルをマッピング
+        result.stylesApplied = applyStyleMapping(doc);
+
+        // 小項目に□記号を追加（まだない場合）
+        result.kokomokuFixed = addKokomokuSymbol(doc);
+
+        var endTime = new Date();
+        var duration = (endTime - startTime) / 1000;
+
+        app.scriptPreferences.enableRedraw = true;
+
+        var resultMsg = "完了!\n\n";
+        resultMsg += "既存ページ: " + initialPageCount + "p\n";
+        resultMsg += "追加見開き: " + result.spreadsCreated + "\n";
+        resultMsg += "段落数: " + result.paragraphsImported + "\n";
+        resultMsg += "スタイル変換: " + result.stylesApplied + "件\n";
+        resultMsg += "小項目□追加: " + result.kokomokuFixed + "件\n";
+        resultMsg += "処理時間: " + duration.toFixed(1) + "秒";
+
+        alert(resultMsg);
+
+    } catch (e) {
+        app.scriptPreferences.enableRedraw = true;
+        alert("エラー:\n\n" + e.message + "\n\n行: " + e.line);
+    }
+}
+
+// マスターページ一覧を取得
+function listMasterPages(doc) {
+    var list = [];
+    for (var i = 0; i < doc.masterSpreads.length; i++) {
+        list.push(doc.masterSpreads[i].name);
+    }
+    return list.join("\n");
+}
+
+// マスターページを取得
+function getMasterPage(doc, masterName) {
+    try {
+        var master = doc.masterSpreads.itemByName(masterName);
+        if (master.isValid) {
+            return master;
+        }
+    } catch (e) {}
+    return null;
+}
+
+// Word文書をインポート
+function importWordDocument(doc, wordFile, master) {
+    var result = {
+        spreadsCreated: 0,
+        paragraphsImported: 0,
+        stylesApplied: 0,
+        kokomokuFixed: 0
+    };
+
+    // 最後のページを取得
+    var lastPage = doc.pages[doc.pages.length - 1];
+
+    // テキストフレームを取得または作成
+    var textFrame = getOrCreateTextFrame(doc, lastPage);
+
+    if (!textFrame) {
+        throw new Error("テキストフレームを作成できませんでした。");
+    }
+
+    debugLog("テキストフレームを取得: " + textFrame.id);
+
+    // Word文書を配置
+    try {
+        textFrame.place(wordFile);
+        debugLog("Word文書を配置完了");
+    } catch (e) {
+        throw new Error("Word文書の読み込み失敗: " + e.message);
+    }
+
+    // オーバーフローしている場合、見開きページを自動追加
+    if (textFrame.overflows && CONFIG.autoCreatePages) {
+        debugLog("テキストがオーバーフロー、ページを追加します");
+        result.spreadsCreated = autoFlowWithSpreads(doc, textFrame, master);
+    }
+
+    result.paragraphsImported = countParagraphs(doc);
+
+    return result;
+}
+
+// テキストフレームを取得または作成
+function getOrCreateTextFrame(doc, page) {
+    // まずマスターページのテキストフレームをオーバーライド
+    var masterFrame = overrideMasterTextFrame(page);
+    if (masterFrame) {
+        debugLog("マスターフレームをオーバーライド");
+        return masterFrame;
+    }
+
+    // マスターフレームがない場合、ページ上の最大のテキストフレームを探す
+    var textFrames = page.textFrames;
+    var largestFrame = null;
+    var largestArea = 0;
+
+    for (var i = 0; i < textFrames.length; i++) {
+        // 既に連結されているフレームはスキップ
+        if (textFrames[i].previousTextFrame) {
+            continue;
+        }
+
+        var bounds = textFrames[i].geometricBounds;
+        var area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]);
+
+        if (area > largestArea) {
+            largestArea = area;
+            largestFrame = textFrames[i];
+        }
+    }
+
+    if (largestFrame) {
+        debugLog("既存のテキストフレームを使用");
+        return largestFrame;
+    }
+
+    // テキストフレームがない場合は新規作成
+    debugLog("新規テキストフレームを作成");
+    return createTextFrame(doc, page);
+}
+
+// マスターページのテキストフレームをオーバーライド
+function overrideMasterTextFrame(page) {
+    try {
+        var appliedMaster = page.appliedMaster;
+
+        if (!appliedMaster || appliedMaster.name === "None") {
+            return null;
+        }
+
+        // ページ上のすべてのマスターアイテムをオーバーライド
+        try {
+            page.overrideAll();
+
+            var textFrames = page.textFrames;
+
+            // 連結されていない最初のテキストフレームを返す
+            for (var i = 0; i < textFrames.length; i++) {
+                if (!textFrames[i].previousTextFrame) {
+                    return textFrames[i];
+                }
+            }
+
+            if (textFrames.length > 0) {
+                return textFrames[0];
+            }
+        } catch (e) {
+            debugLog("overrideAll失敗: " + e.message);
+        }
+
+        // 手動でオーバーライド
+        var masterPages = appliedMaster.pages;
+
+        for (var i = 0; i < masterPages.length; i++) {
+            var masterPage = masterPages[i];
+
+            if (masterPage.side === page.side || masterPage.side === PageSideOptions.SINGLE_SIDED) {
+                var masterTextFrames = masterPage.textFrames;
+
+                if (masterTextFrames.length > 0) {
+                    try {
+                        return masterTextFrames[0].override(page);
+                    } catch (e) {
+                        debugLog("個別オーバーライド失敗: " + e.message);
+                    }
+                }
+            }
+        }
+
+    } catch (e) {
+        debugLog("マスターオーバーライドエラー: " + e.message);
+    }
+
+    return null;
+}
+
+// テキストフレームを新規作成
+function createTextFrame(doc, page) {
+    var pageWidth = doc.documentPreferences.pageWidth;
+    var pageHeight = doc.documentPreferences.pageHeight;
+    var margin = CONFIG.fallbackMargin;
+
+    var isLeftPage = (page.side === PageSideOptions.LEFT_HAND);
+    var isFacingPages = doc.documentPreferences.facingPages;
+
+    var left, right;
+
+    if (isFacingPages) {
+        if (isLeftPage) {
+            left = margin.inside;
+            right = pageWidth - margin.outside;
+        } else {
+            left = margin.outside;
+            right = pageWidth - margin.inside;
+        }
+    } else {
+        left = margin.outside;
+        right = pageWidth - margin.inside;
+    }
+
+    var top = margin.top;
+    var bottom = pageHeight - margin.bottom;
+    var bounds = [top, left, bottom, right];
+
+    return page.textFrames.add({geometricBounds: bounds});
+}
+
+// 見開き単位でページを自動追加
+function autoFlowWithSpreads(doc, startFrame, master) {
+    var spreadsCreated = 0;
+    var currentFrame = startFrame;
+    var loopCount = 0;
+
+    while (currentFrame.overflows && loopCount < CONFIG.maxSpreads) {
+        loopCount++;
+
+        // 新しい見開きを追加
+        var newSpread = doc.spreads.add(LocationOptions.AT_END);
+        spreadsCreated++;
+
+        debugLog("見開き " + spreadsCreated + " を追加");
+
+        // マスターページを適用
+        try {
+            newSpread.appliedMaster = master;
+        } catch (e) {
+            debugLog("マスター適用失敗: " + e.message);
+        }
+
+        var pages = newSpread.pages;
+
+        if (pages.length === 0) {
+            break;
+        }
+
+        // 見開きの各ページにテキストフレームを連結
+        for (var i = 0; i < pages.length; i++) {
+            var pageFrame = getOrCreateTextFrame(doc, pages[i]);
+
+            if (pageFrame) {
+                try {
+                    // 前のフレームと連結
+                    pageFrame.previousTextFrame = currentFrame;
+                    currentFrame = pageFrame;
+
+                    debugLog("ページ " + pages[i].name + " にフレームを連結");
+
+                    // オーバーフローがなくなったら終了
+                    if (!currentFrame.overflows) {
+                        debugLog("オーバーフロー解消");
+                        break;
+                    }
+                } catch (e) {
+                    debugLog("フレーム連結エラー: " + e.message);
+                    return spreadsCreated;
+                }
+            }
+        }
+
+        // 最後のフレームに移動
+        while (currentFrame.nextTextFrame) {
+            currentFrame = currentFrame.nextTextFrame;
+        }
+    }
+
+    debugLog("合計 " + spreadsCreated + " 見開きを追加");
+    return spreadsCreated;
+}
+
+// スタイルマッピングを適用
+function applyStyleMapping(doc) {
+    var stories = doc.stories;
+    var mappingCount = 0;
+
+    debugLog("=== スタイルマッピング開始 ===");
+
+    for (var i = 0; i < stories.length; i++) {
+        var paragraphs = stories[i].paragraphs;
+
+        for (var j = 0; j < paragraphs.length; j++) {
+            var para = paragraphs[j];
+            var currentStyleName = para.appliedParagraphStyle.name;
+
+            // スタイルマッピングに該当するか確認
+            if (CONFIG.styleMapping.hasOwnProperty(currentStyleName)) {
+                var targetStyleName = CONFIG.styleMapping[currentStyleName];
+
+                try {
+                    var targetStyle = doc.paragraphStyles.itemByName(targetStyleName);
+                    if (targetStyle.isValid) {
+                        para.appliedParagraphStyle = targetStyle;
+                        mappingCount++;
+
+                        if (mappingCount <= 5) {
+                            debugLog("スタイル変換: " + currentStyleName + " → " + targetStyleName);
+                        }
+                    } else {
+                        debugLog("対象スタイルが見つかりません: " + targetStyleName);
+                    }
+                } catch (e) {
+                    debugLog("スタイル適用エラー: " + e.message);
+                }
+            }
+        }
+    }
+
+    debugLog("スタイルマッピング完了: " + mappingCount + "件");
+    return mappingCount;
+}
+
+// 小項目に□記号を追加
+function addKokomokuSymbol(doc) {
+    var addCount = 0;
+    var kokomokuStyle = doc.paragraphStyles.itemByName("小項目");
+
+    if (!kokomokuStyle.isValid) {
+        debugLog("「小項目」スタイルが見つかりません");
+        return 0;
+    }
+
+    debugLog("=== 小項目に□記号を追加開始 ===");
+
+    var stories = doc.stories;
+    var symbol = CONFIG.kokomokuSymbol;
+
+    for (var i = 0; i < stories.length; i++) {
+        var paragraphs = stories[i].paragraphs;
+
+        for (var j = 0; j < paragraphs.length; j++) {
+            var para = paragraphs[j];
+
+            if (para.appliedParagraphStyle.name === "小項目") {
+                try {
+                    var paraText = para.contents;
+
+                    // 既に□で始まっている場合はスキップ
+                    if (paraText.indexOf("□") === 0) {
+                        debugLog("既に□あり: 段落 " + j);
+                        continue;
+                    }
+
+                    // 段落の先頭に□記号を挿入
+                    para.contents = symbol + paraText;
+                    addCount++;
+
+                    if (addCount <= 5) {
+                        debugLog("□記号追加: 段落 " + j);
+                    }
+                } catch (e) {
+                    debugLog("□記号追加エラー: " + e.message);
+                }
+            }
+        }
+    }
+
+    debugLog("小項目□記号追加完了: " + addCount + "件");
+    return addCount;
+}
+
+// 段落数をカウント
+function countParagraphs(doc) {
+    var count = 0;
+    for (var i = 0; i < doc.stories.length; i++) {
+        count += doc.stories[i].paragraphs.length;
+    }
+    return count;
+}
+
+// スクリプト実行
+main();
