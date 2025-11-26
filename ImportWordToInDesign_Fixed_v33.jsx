@@ -72,8 +72,9 @@ var CONFIG = {
     },
 
     // 表（テーブル）設定
+    // enabled: false にすると、Wordの表をそのまま保持（v26以前の動作）
     tableSettings: {
-        enabled: true,
+        enabled: false,  // trueにすると罫線・余白・フォントを統一
         // 罫線設定
         strokeWeight: 0.5,
         strokeColor: "Black",
