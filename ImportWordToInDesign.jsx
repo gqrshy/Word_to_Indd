@@ -94,6 +94,8 @@ function main() {
     confirmMsg += "・図表番号 → 図番号\n";
     confirmMsg += "・リスト → リスト\n";
     confirmMsg += "・番号 → 番号リスト\n\n";
+    confirmMsg += "【表のフォント更新】\n";
+    confirmMsg += "・既存ドキュメントの全表: MS明朝 → BIZ UDゴシック\n\n";
     confirmMsg += "【マスターページ】\n";
     confirmMsg += "・" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "\n\n";
     confirmMsg += "実行しますか?";
@@ -125,6 +127,9 @@ function main() {
             result.fontsReplaced = replaceFonts(result.importedStory);
         }
 
+        // 既存ドキュメントのすべての表のフォントを更新
+        result.tableFontsUpdated = updateAllTableFonts(doc);
+
         var endTime = new Date();
         var duration = (endTime - startTime) / 1000;
 
@@ -137,6 +142,7 @@ function main() {
         resultMsg += "スタイル変換: " + result.stylesApplied + "件\n";
         resultMsg += "小項目□追加: " + result.kokomokuFixed + "件\n";
         resultMsg += "フォント置換: " + (result.fontsReplaced || 0) + "件\n";
+        resultMsg += "表フォント更新: " + (result.tableFontsUpdated || 0) + "文字\n";
         resultMsg += "処理時間: " + duration.toFixed(1) + "秒";
 
         alert(resultMsg);
@@ -575,6 +581,87 @@ function replaceFonts(importedStory) {
     }
 
     debugLog("フォント置換完了: " + replaceCount + "件");
+    return replaceCount;
+}
+
+// 既存ドキュメントのすべての表のフォントを更新
+// MS明朝（Regular/Bold問わず）→ BIZ UDゴシック Regular
+function updateAllTableFonts(doc) {
+    var replaceCount = 0;
+    var tableCount = 0;
+
+    debugLog("=== 既存ドキュメントの全表フォント更新開始 ===");
+
+    // 置換先フォントを取得
+    var targetFont;
+    try {
+        targetFont = app.fonts.itemByName("BIZ UDGothic\tRegular");
+        if (!targetFont.isValid) {
+            targetFont = app.fonts.itemByName("BIZ UDゴシック\tRegular");
+        }
+    } catch (e) {
+        debugLog("BIZ UDゴシックが見つかりません: " + e.message);
+        return 0;
+    }
+
+    if (!targetFont || !targetFont.isValid) {
+        debugLog("置換先フォントが見つかりません");
+        return 0;
+    }
+
+    debugLog("置換先フォント: " + targetFont.name);
+
+    // ドキュメント内のすべてのストーリーを走査
+    for (var s = 0; s < doc.stories.length; s++) {
+        var story = doc.stories[s];
+
+        // ストーリー内のすべてのテーブルを走査
+        var tables = story.tables;
+        for (var t = 0; t < tables.length; t++) {
+            var table = tables[t];
+            tableCount++;
+
+            debugLog("表 " + tableCount + " を処理中...");
+
+            // テーブル内のすべてのセルを走査
+            var cells = table.cells;
+            for (var c = 0; c < cells.length; c++) {
+                var cell = cells[c];
+
+                // セル内のすべての文字を走査
+                try {
+                    var characters = cell.characters;
+                    for (var i = 0; i < characters.length; i++) {
+                        try {
+                            var ch = characters[i];
+                            var fontName = ch.appliedFont.name;
+
+                            // MS明朝を検出（Regular/Bold問わず）
+                            var isMincho = false;
+                            if (fontName.indexOf("MS") >= 0 && fontName.indexOf("明朝") >= 0) {
+                                isMincho = true;
+                            } else if (fontName.indexOf("ＭＳ") >= 0 && fontName.indexOf("明朝") >= 0) {
+                                isMincho = true;
+                            } else if (fontName.indexOf("Mincho") >= 0) {
+                                isMincho = true;
+                            }
+
+                            if (isMincho) {
+                                ch.appliedFont = targetFont;
+                                replaceCount++;
+                            }
+                        } catch (e) {
+                            // 個別の文字エラーは無視
+                        }
+                    }
+                } catch (e) {
+                    debugLog("セル処理エラー: " + e.message);
+                }
+            }
+        }
+    }
+
+    debugLog("全表フォント更新完了: " + tableCount + "表, " + replaceCount + "文字");
     return replaceCount;
 }
 
