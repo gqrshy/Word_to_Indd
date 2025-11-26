@@ -574,6 +574,7 @@ function removeLeadingSymbol(para, symbol) {
 // 小項目に□記号を追加（インポートしたストーリーのみ）
 function addKokomokuSymbol(doc, importedStory) {
     var addCount = 0;
+    var skippedCount = 0;
     var kokomokuStyle = doc.paragraphStyles.itemByName("小項目");
 
     if (!kokomokuStyle.isValid) {
@@ -604,9 +605,52 @@ function addKokomokuSymbol(doc, importedStory) {
                     continue;
                 }
 
-                // 段落の先頭に□記号を挿入
-                para.contents = symbol + paraText;
-                addCount++;
+                // 段落内に表やインラインオブジェクトがあるかチェック
+                // InDesignでは表やオブジェクトは特殊文字（制御文字）として表現される
+                var hasInlineObjects = false;
+
+                // 表のチェック
+                if (para.tables && para.tables.length > 0) {
+                    hasInlineObjects = true;
+                    debugLog("警告: 段落 " + j + " に表が含まれています - スキップ");
+                }
+
+                // インラインオブジェクトや特殊文字のチェック
+                // 制御文字（U+0000-U+001F, U+FFFC等）が含まれている場合はスキップ
+                if (!hasInlineObjects) {
+                    for (var c = 0; c < paraText.length; c++) {
+                        var charCode = paraText.charCodeAt(c);
+                        // OBJECT REPLACEMENT CHARACTER (U+FFFC) や制御文字をチェック
+                        if (charCode === 0xFFFC || charCode < 0x0020 && charCode !== 0x0009 && charCode !== 0x000A && charCode !== 0x000D) {
+                            hasInlineObjects = true;
+                            debugLog("警告: 段落 " + j + " にインラインオブジェクト文字を検出 (charCode: " + charCode + ") - スキップ");
+                            break;
+                        }
+                    }
+                }
+
+                // 空または空白のみの段落はスキップ（表アンカーの可能性）
+                var trimmedText = paraText.replace(/[\s\r\n　]/g, "");
+                if (trimmedText.length === 0) {
+                    skippedCount++;
+                    debugLog("空の小項目段落をスキップ: 段落 " + j + " (表アンカーの可能性)");
+                    continue;
+                }
+
+                if (hasInlineObjects) {
+                    skippedCount++;
+                    continue;
+                }
+
+                // 段落の先頭に□記号を挿入（insertionPointを使用してアンカーを保護）
+                try {
+                    para.insertionPoints[0].contents = symbol;
+                    addCount++;
+                } catch (insertError) {
+                    // insertionPointが使えない場合は従来の方法にフォールバック
+                    para.contents = symbol + paraText;
+                    addCount++;
+                }
 
                 if (addCount <= 5) {
                     debugLog("□記号追加: 段落 " + j);
@@ -618,6 +662,9 @@ function addKokomokuSymbol(doc, importedStory) {
     }
 
     debugLog("小項目□記号追加完了: " + addCount + "件");
+    if (skippedCount > 0) {
+        debugLog("スキップした段落: " + skippedCount + "件 (インラインオブジェクトまたは空)");
+    }
     return addCount;
 }
 
