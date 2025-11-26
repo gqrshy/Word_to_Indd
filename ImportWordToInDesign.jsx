@@ -29,7 +29,10 @@ var CONFIG = {
         "演習タイトル": "演習タイトル",
 
         // 図表番号 → 図番号
-        "図表番号": "図番号"
+        "図表番号": "図番号",
+
+        // リスト → リスト (同名でもInDesign側スタイルを明示的に適用)
+        "リスト": "リスト"
     },
 
     // 小項目の□記号設定
@@ -85,7 +88,8 @@ function main() {
     confirmMsg += "・小項目 → 小項目 (□記号保持)\n";
     confirmMsg += "・標準/Normal → Normal\n";
     confirmMsg += "・演習タイトル → 演習タイトル\n";
-    confirmMsg += "・図表番号 → 図番号\n\n";
+    confirmMsg += "・図表番号 → 図番号\n";
+    confirmMsg += "・リスト → リスト\n\n";
     confirmMsg += "【マスターページ】\n";
     confirmMsg += "・" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "\n\n";
     confirmMsg += "実行しますか?";
