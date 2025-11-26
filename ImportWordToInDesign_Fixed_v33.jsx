@@ -70,6 +70,26 @@ var CONFIG = {
         applyBlack: true,
         removeUnderline: false
     },
+
+    // 表（テーブル）設定
+    tableSettings: {
+        enabled: true,
+        // 罫線設定
+        strokeWeight: 0.5,
+        strokeColor: "Black",
+        // セル設定
+        cellInset: {
+            top: 2,
+            bottom: 2,
+            left: 3,
+            right: 3
+        },
+        // ヘッダー行の設定
+        headerRowFill: "None",
+        headerRowBold: true,
+        // 表のフォント設定（CONFIG.defaultFontを使用）
+        applyDefaultFont: true
+    },
     
     // スタイルを強制的に再作成
     forceRecreateStyles: false,
@@ -116,6 +136,9 @@ function main() {
     confirmMsg += "・小項目 → 小項目(太字、14.817Q、□付き)\n";
     confirmMsg += "・リスト → リスト(14.817Q、・付き)\n";
     confirmMsg += "・番号リスト → 自動採番(演習タイトル後でリセット)\n\n";
+    confirmMsg += "【表（テーブル）処理】\n";
+    confirmMsg += "・Word内の表を保持・フォーマット\n";
+    confirmMsg += "・罫線・セル余白の統一\n\n";
     confirmMsg += "【フォント統一】\n";
     confirmMsg += "・BIZ UDゴシックに統一\n";
     confirmMsg += "・MS明朝などを強制置換\n\n";
@@ -155,7 +178,12 @@ function main() {
         
         // ハイパーリンクの色を変更
         result.hyperlinksFixed = fixHyperlinkColors(doc);
-        
+
+        // Wordからインポートした表を処理
+        var tableResult = processImportedTables(doc);
+        result.tablesProcessed = tableResult.tablesProcessed;
+        result.cellsProcessed = tableResult.cellsProcessed;
+
         var endTime = new Date();
         var duration = (endTime - startTime) / 1000;
         
@@ -171,6 +199,7 @@ function main() {
         resultMsg += "小項目記号追加: " + result.kokomokuFixed + "件\n";
         resultMsg += "リスト記号追加: " + result.listFixed + "件\n";
         resultMsg += "リンク修正: " + result.hyperlinksFixed + "件\n";
+        resultMsg += "表処理: " + result.tablesProcessed + "表 (" + result.cellsProcessed + "セル)\n";
         resultMsg += "処理時間: " + duration.toFixed(1) + "秒";
         
         alert(resultMsg);
@@ -419,7 +448,9 @@ function importWordDocument(doc, wordFile, master) {
         listFixed: 0,
         kokomokuFormatted: 0,
         listFormatted: 0,
-        hyperlinksFixed: 0
+        hyperlinksFixed: 0,
+        tablesProcessed: 0,
+        cellsProcessed: 0
     };
     
     var lastPage = doc.pages[doc.pages.length - 1];
@@ -935,6 +966,143 @@ function countParagraphs(doc) {
         count += doc.stories[i].paragraphs.length;
     }
     return count;
+}
+
+// Wordからインポートした表を処理
+function processImportedTables(doc) {
+    var result = {
+        tablesProcessed: 0,
+        cellsProcessed: 0
+    };
+
+    if (!CONFIG.tableSettings.enabled) {
+        debugLog("表処理が無効化されています");
+        return result;
+    }
+
+    debugLog("=== 表（テーブル）の処理開始 ===");
+
+    // フォント取得
+    var targetFont, targetBoldFont;
+    if (CONFIG.tableSettings.applyDefaultFont) {
+        try {
+            targetFont = app.fonts.itemByName(CONFIG.defaultFont.family + "\t" + CONFIG.defaultFont.style);
+        } catch (e) {
+            try {
+                targetFont = app.fonts.itemByName(CONFIG.defaultFont.family);
+            } catch (e2) {
+                debugLog("警告: デフォルトフォントが見つかりません");
+            }
+        }
+
+        try {
+            targetBoldFont = app.fonts.itemByName(CONFIG.defaultFont.family + "\tBold");
+        } catch (e) {
+            targetBoldFont = targetFont;
+        }
+    }
+
+    // 罫線の色を取得
+    var strokeColor;
+    try {
+        strokeColor = doc.colors.itemByName(CONFIG.tableSettings.strokeColor);
+        if (!strokeColor.isValid) {
+            strokeColor = doc.colors.itemByName("Black");
+        }
+    } catch (e) {
+        strokeColor = doc.colors.item(0);
+    }
+
+    // ドキュメント内の全ストーリーを検索
+    var stories = doc.stories;
+
+    for (var i = 0; i < stories.length; i++) {
+        var tables = stories[i].tables;
+
+        if (tables.length === 0) {
+            continue;
+        }
+
+        debugLog("ストーリー " + i + " に " + tables.length + " 個の表を検出");
+
+        for (var j = 0; j < tables.length; j++) {
+            try {
+                var table = tables[j];
+
+                debugLog("表 " + (j + 1) + ": " + table.rows.length + "行 x " + table.columns.length + "列");
+
+                // 表全体の罫線を設定
+                try {
+                    // 外枠の罫線
+                    table.topBorderStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                    table.bottomBorderStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                    table.leftBorderStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                    table.rightBorderStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                    table.topBorderStrokeColor = strokeColor;
+                    table.bottomBorderStrokeColor = strokeColor;
+                    table.leftBorderStrokeColor = strokeColor;
+                    table.rightBorderStrokeColor = strokeColor;
+                } catch (e) {
+                    debugLog("表罫線設定エラー: " + e.message);
+                }
+
+                // 各セルを処理
+                var cells = table.cells;
+                for (var k = 0; k < cells.length; k++) {
+                    try {
+                        var cell = cells[k];
+
+                        // セルの内部余白を設定
+                        cell.topInset = CONFIG.tableSettings.cellInset.top;
+                        cell.bottomInset = CONFIG.tableSettings.cellInset.bottom;
+                        cell.leftInset = CONFIG.tableSettings.cellInset.left;
+                        cell.rightInset = CONFIG.tableSettings.cellInset.right;
+
+                        // セルの罫線を設定
+                        cell.topEdgeStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                        cell.bottomEdgeStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                        cell.leftEdgeStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                        cell.rightEdgeStrokeWeight = CONFIG.tableSettings.strokeWeight;
+                        cell.topEdgeStrokeColor = strokeColor;
+                        cell.bottomEdgeStrokeColor = strokeColor;
+                        cell.leftEdgeStrokeColor = strokeColor;
+                        cell.rightEdgeStrokeColor = strokeColor;
+
+                        // フォントを適用
+                        if (targetFont && CONFIG.tableSettings.applyDefaultFont) {
+                            var isHeaderRow = (cell.rowSpan > 0 && table.rows[0] &&
+                                             cell.parentRow === table.rows[0]);
+
+                            // ヘッダー行の場合は太字、それ以外は通常
+                            var cellTexts = cell.texts;
+                            for (var t = 0; t < cellTexts.length; t++) {
+                                try {
+                                    if (isHeaderRow && CONFIG.tableSettings.headerRowBold && targetBoldFont) {
+                                        cellTexts[t].appliedFont = targetBoldFont;
+                                    } else {
+                                        cellTexts[t].appliedFont = targetFont;
+                                    }
+                                    cellTexts[t].pointSize = CONFIG.fontSize;
+                                } catch (e) {}
+                            }
+                        }
+
+                        result.cellsProcessed++;
+                    } catch (e) {
+                        debugLog("セル処理エラー: " + e.message);
+                    }
+                }
+
+                result.tablesProcessed++;
+
+            } catch (e) {
+                debugLog("表処理エラー: " + e.message);
+            }
+        }
+    }
+
+    debugLog("表処理完了: " + result.tablesProcessed + "表, " + result.cellsProcessed + "セル");
+    return result;
 }
 
 // スクリプト実行
