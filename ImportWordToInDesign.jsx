@@ -1,56 +1,31 @@
 // ImportWordToInDesign.jsx
 // Word文書をInDesignにインポートし、段落スタイルを変換するスクリプト
 // InDesign 2025対応版
-//
-// PowerShellによる前処理機能付き：
-// - SVG拡張形式をPNGに変換（クラッシュ防止）
-// - 変更履歴を確定
-// - コメントを削除
 
 #target indesign
 
-// グローバル設定
-var CONFIG = {
-    // 前処理設定
-    enablePreprocess: true,  // PowerShellによる前処理を有効化
-    keepCleanedFile: false,  // 前処理後のファイルを保持するか（falseで自動削除）
+// ============================================================
+// 設定
+// ============================================================
 
+var CONFIG = {
     autoCreatePages: true,
     maxSpreads: 100,
-
-    // 使用するマスターページ
     masterPagePrefix: "H",
     masterPageName: "本文マスター",
 
-    // スタイルマッピング (Word → InDesign)
-    // Wordスタイル名: InDesignスタイル名
     styleMapping: {
-        // 大項目 → 大見出し1
         "大項目": "大見出し1",
-
-        // 小項目 → 小項目 (□記号を保持)
         "小項目": "小項目",
-
-        // 標準 → Normal (インポートしたストーリーのみ)
         "標準": "Normal",
-
-        // 演習タイトル → 演習タイトル
         "演習タイトル": "演習タイトル",
-
-        // 図表番号 → 図番号
         "図表番号": "図番号",
-
-        // リスト → リスト (同名でもInDesign側スタイルを明示的に適用)
         "リスト": "リスト",
-
-        // 番号 → 番号リスト
         "番号": "番号リスト"
     },
 
-    // 小項目の□記号設定
-    kokomokuSymbol: "□　", // □+全角スペース
+    kokomokuSymbol: "□　",
 
-    // マージン設定(フォールバック用)
     fallbackMargin: {
         top: 36,
         bottom: 36,
@@ -58,157 +33,39 @@ var CONFIG = {
         outside: 36
     },
 
-    // デバッグモード
     debugMode: true
 };
 
-// デバッグログ
 function debugLog(message) {
     if (CONFIG.debugMode) {
         $.writeln("[DEBUG] " + message);
     }
 }
 
-// ========================================
-// PowerShell前処理関連
-// ========================================
+// ============================================================
+// Wordインポート
+// ============================================================
 
-// スクリプトファイルと同じフォルダにあるPowerShellスクリプトのパスを取得
-function getPreprocessScriptPath() {
+function configureWordImportPreferences() {
     try {
-        var scriptFile = new File($.fileName);
-        var scriptFolder = scriptFile.parent;
-        var psScript = new File(scriptFolder + "/PreprocessDocx.ps1");
-
-        if (psScript.exists) {
-            return psScript.fsName; // Windowsパス形式で返す
-        } else {
-            debugLog("PowerShellスクリプトが見つかりません: " + psScript.fsName);
-            return null;
-        }
+        var prefs = app.wordRTFImportPreferences;
+        prefs.removeFormatting = false;
+        prefs.preserveGraphics = true;
+        prefs.preserveLocalOverrides = true;
+        prefs.importFootnotes = true;
+        prefs.importEndnotes = true;
+        prefs.importIndex = true;
+        prefs.importTOC = true;
+        prefs.importUnusedStyles = false;
+        prefs.useTypographersQuotes = true;
+        debugLog("Wordインポート設定を構成完了");
     } catch (e) {
-        debugLog("スクリプトパス取得エラー: " + e.message);
-        return null;
+        debugLog("Wordインポート設定エラー: " + e.message);
     }
 }
 
-// PowerShellで前処理を実行
-// 戻り値: 成功時は前処理後のファイルパス、失敗時はnull
-function preprocessWordDocument(inputPath) {
-    if (!CONFIG.enablePreprocess) {
-        debugLog("前処理はスキップ（CONFIG.enablePreprocess = false）");
-        return inputPath; // 前処理なしで元のファイルを返す
-    }
-
-    // Windowsのみ対応
-    if ($.os.indexOf("Windows") === -1) {
-        debugLog("PowerShell前処理はWindowsのみ対応");
-        return inputPath;
-    }
-
-    var psScriptPath = getPreprocessScriptPath();
-    if (!psScriptPath) {
-        // PowerShellスクリプトがない場合は前処理なしで続行
-        var continueWithout = confirm(
-            "前処理スクリプト（PreprocessDocx.ps1）が見つかりません。\n\n" +
-            "前処理なしでインポートを続行しますか？\n" +
-            "（SVGや変更履歴を含むファイルはクラッシュする可能性があります）"
-        );
-        return continueWithout ? inputPath : null;
-    }
-
-    debugLog("PowerShellスクリプト: " + psScriptPath);
-
-    // 出力ファイルパスを生成（一時フォルダに作成）
-    var inputFile = new File(inputPath);
-    var tempFolder = Folder.temp;
-    var timestamp = new Date().getTime();
-    var outputFileName = inputFile.name.replace(/\.docx$/i, "_cleaned_" + timestamp + ".docx");
-    var outputPath = tempFolder.fsName + "\\" + outputFileName;
-
-    debugLog("前処理入力: " + inputPath);
-    debugLog("前処理出力: " + outputPath);
-
-    // VBScript経由でPowerShellを実行（同期実行）
-    var vbsCode = 'Set objShell = CreateObject("WScript.Shell")\r\n';
-    vbsCode += 'intReturn = objShell.Run("powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File ""' +
-               psScriptPath.replace(/\\/g, '\\\\') + '"" -InputFile ""' +
-               inputPath.replace(/\\/g, '\\\\') + '"" -OutputFile ""' +
-               outputPath.replace(/\\/g, '\\\\') + '""", 0, True)\r\n';
-    vbsCode += 'WScript.Quit(intReturn)';
-
-    try {
-        debugLog("PowerShell前処理を実行中...");
-
-        // VBScriptを一時ファイルに書き出して実行
-        var vbsFile = new File(tempFolder + "/preprocess_docx_" + timestamp + ".vbs");
-        vbsFile.encoding = "UTF-8";
-        vbsFile.open("w");
-        vbsFile.write(vbsCode);
-        vbsFile.close();
-
-        // VBScriptを実行
-        vbsFile.execute();
-
-        // 実行完了を待つ（最大60秒）
-        var outputFile = new File(outputPath);
-        var waitCount = 0;
-        var maxWait = 120; // 0.5秒 × 120 = 60秒
-
-        while (!outputFile.exists && waitCount < maxWait) {
-            $.sleep(500);
-            waitCount++;
-        }
-
-        // VBSファイルを削除
-        try {
-            vbsFile.remove();
-        } catch (e) {}
-
-        // 出力ファイルの確認
-        if (outputFile.exists) {
-            debugLog("前処理完了: " + outputPath);
-            return outputPath;
-        } else {
-            debugLog("前処理失敗: 出力ファイルが生成されませんでした");
-
-            var continueWithout = confirm(
-                "前処理に失敗しました。\n\n" +
-                "前処理なしでインポートを続行しますか？\n" +
-                "（クラッシュする可能性があります）"
-            );
-            return continueWithout ? inputPath : null;
-        }
-
-    } catch (e) {
-        debugLog("前処理実行エラー: " + e.message);
-
-        var continueWithout = confirm(
-            "前処理中にエラーが発生しました:\n" + e.message + "\n\n" +
-            "前処理なしでインポートを続行しますか？"
-        );
-        return continueWithout ? inputPath : null;
-    }
-}
-
-// 前処理で作成した一時ファイルを削除
-function cleanupPreprocessedFile(filePath, originalPath) {
-    if (!CONFIG.keepCleanedFile && filePath !== originalPath) {
-        try {
-            var file = new File(filePath);
-            if (file.exists) {
-                file.remove();
-                debugLog("一時ファイルを削除: " + filePath);
-            }
-        } catch (e) {
-            debugLog("一時ファイル削除エラー: " + e.message);
-        }
-    }
-}
-
-// 埋め込みオブジェクトの問題を検出
 function detectEmbeddedObjectIssues(story) {
-    if (!story || !story.isValid) return;
+    if (!story || !story.isValid) return 0;
 
     var issueCount = 0;
     var paragraphs = story.paragraphs;
@@ -217,251 +74,32 @@ function detectEmbeddedObjectIssues(story) {
         try {
             var para = paragraphs[i];
             var text = para.contents;
-
-            // □のみの段落を検出（埋め込みオブジェクトが変換できなかった可能性）
-            // 改行コードを除去して比較
             var cleanText = text.replace(/[\r\n]/g, "");
 
             if (cleanText === "□" || cleanText === "\uFFFD" || cleanText === "\u25A1") {
                 issueCount++;
-                debugLog("警告: 段落 " + (i + 1) + " に孤立した□文字を検出（埋め込みオブジェクトの可能性）");
-
-                // 前後の段落内容をログ出力（デバッグ用）
-                if (i > 0) {
-                    var prevText = paragraphs[i - 1].contents.substring(0, 50);
-                    debugLog("  前の段落: " + prevText + "...");
-                }
-                if (i < paragraphs.length - 1) {
-                    var nextText = paragraphs[i + 1].contents.substring(0, 50);
-                    debugLog("  次の段落: " + nextText + "...");
-                }
+                debugLog("警告: 段落 " + (i + 1) + " に孤立した□文字を検出");
             }
-        } catch (e) {
-            // エラーは無視
-        }
+        } catch (e) {}
     }
 
     if (issueCount > 0) {
-        debugLog("合計 " + issueCount + " 件の埋め込みオブジェクト問題を検出");
-        debugLog("ヒント: Word文書内の表がExcel埋め込みオブジェクトの場合、");
-        debugLog("       Wordで表を選択し、「表に変換」してから再インポートしてください。");
+        debugLog("埋め込みオブジェクト問題: " + issueCount + "件");
     }
 
     return issueCount;
 }
 
-// Wordインポート設定を構成
-function configureWordImportPreferences() {
-    try {
-        var prefs = app.wordRTFImportPreferences;
-
-        // テーブルをそのまま（フォーマット付き）でインポート
-        prefs.removeFormatting = false;
-
-        // グラフィック/埋め込みオブジェクトを保持
-        prefs.preserveGraphics = true;
-
-        // ローカルオーバーライドを保持
-        prefs.preserveLocalOverrides = true;
-
-        // 脚注・索引等をインポート
-        prefs.importFootnotes = true;
-        prefs.importEndnotes = true;
-        prefs.importIndex = true;
-        prefs.importTOC = true;
-
-        // 未使用スタイルもインポート
-        prefs.importUnusedStyles = false;
-
-        // タイポグラフィ引用符を使用
-        prefs.useTypographersQuotes = true;
-
-        debugLog("Wordインポート設定を構成完了");
-        debugLog("  - preserveGraphics: " + prefs.preserveGraphics);
-        debugLog("  - removeFormatting: " + prefs.removeFormatting);
-        debugLog("  - preserveLocalOverrides: " + prefs.preserveLocalOverrides);
-    } catch (e) {
-        debugLog("Wordインポート設定エラー: " + e.message);
-    }
-}
-
-// メイン処理
-function main() {
-    if (app.documents.length === 0) {
-        alert("InDesignドキュメントを開いてからスクリプトを実行してください。");
-        return;
-    }
-
-    var doc = app.activeDocument;
-
-    // H-本文マスターの存在確認
-    var hMaster = getMasterPage(doc, CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName);
-    if (!hMaster) {
-        alert("エラー: 「" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "」マスターページが見つかりません。\n\n使用可能なマスターページ:\n" + listMasterPages(doc));
-        return;
-    }
-
-    debugLog("使用マスター: " + hMaster.name);
-
-    // Word文書を選択
-    var wordFile = File.openDialog("インポートするWord文書を選択してください (.docx)", "*.docx");
-    if (!wordFile) {
-        return;
-    }
-
-    // 元のファイルパスを保持
-    var originalWordPath = wordFile.fsName;
-    var processedWordPath = originalWordPath;
-
-    // PowerShellによる前処理を実行
-    if (CONFIG.enablePreprocess) {
-        debugLog("=== 前処理開始 ===");
-        processedWordPath = preprocessWordDocument(originalWordPath);
-
-        if (!processedWordPath) {
-            // ユーザーがキャンセルした場合
-            return;
-        }
-
-        if (processedWordPath !== originalWordPath) {
-            debugLog("前処理済みファイルを使用: " + processedWordPath);
-        }
-    }
-
-    // 前処理後のファイルを使用
-    wordFile = new File(processedWordPath);
-
-    // 確認ダイアログ
-    var confirmMsg = "Word文書をインポートします\n\n";
-
-    // 前処理が実行された場合は表示
-    if (processedWordPath !== originalWordPath) {
-        confirmMsg += "【前処理済み】\n";
-        confirmMsg += "・SVG→PNG変換、変更履歴確定、コメント削除 完了\n\n";
-    }
-
-    confirmMsg += "【段落スタイル変換】\n";
-    confirmMsg += "・大項目 → 大見出し1 (■削除)\n";
-    confirmMsg += "・小項目 → 小項目 (□記号保持)\n";
-    confirmMsg += "・標準/Normal → Normal\n";
-    confirmMsg += "・演習タイトル → 演習タイトル\n";
-    confirmMsg += "・図表番号 → 図番号\n";
-    confirmMsg += "・リスト → リスト\n";
-    confirmMsg += "・番号 → 番号リスト\n";
-    confirmMsg += "・図内テキスト → コード・コマンド\n\n";
-    confirmMsg += "【表のフォント更新】\n";
-    confirmMsg += "・既存ドキュメントの全表: MS明朝 → BIZ UDゴシック\n\n";
-    confirmMsg += "【マスターページ】\n";
-    confirmMsg += "・" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "\n\n";
-    confirmMsg += "実行しますか?";
-
-    if (!confirm(confirmMsg)) {
-        // キャンセル時も一時ファイルを削除
-        cleanupPreprocessedFile(processedWordPath, originalWordPath);
-        return;
-    }
-
-    try {
-        app.scriptPreferences.enableRedraw = false;
-
-        var startTime = new Date();
-
-        // 現在のページ数を記録
-        var initialPageCount = doc.pages.length;
-
-        // Word文書をインポート
-        var result = importWordDocument(doc, wordFile, hMaster);
-
-        // インポートしたストーリーのみに処理を適用
-        if (result.importedStory) {
-            // 段落スタイルをマッピング
-            result.stylesApplied = applyStyleMapping(doc, result.importedStory);
-
-            // 小項目に□記号を追加（まだない場合）
-            result.kokomokuFixed = addKokomokuSymbol(doc, result.importedStory);
-
-            // MS明朝 Bold → BIZ UDゴシック Regular に置換
-            result.fontsReplaced = replaceFonts(result.importedStory);
-
-            // 図（アンカードオブジェクト）内のテキストに「コード・コマンド」スタイルを適用
-            result.codeStyleApplied = applyCodeStyleToAnchoredObjects(doc, result.importedStory);
-        }
-
-        // 既存ドキュメントのすべての表のフォントを更新
-        result.tableFontsUpdated = updateAllTableFonts(doc);
-
-        var endTime = new Date();
-        var duration = (endTime - startTime) / 1000;
-
-        app.scriptPreferences.enableRedraw = true;
-
-        var resultMsg = "完了!\n\n";
-        resultMsg += "既存ページ: " + initialPageCount + "p\n";
-        resultMsg += "追加見開き: " + result.spreadsCreated + "\n";
-        resultMsg += "段落数: " + result.paragraphsImported + "\n";
-        resultMsg += "スタイル変換: " + result.stylesApplied + "件\n";
-        resultMsg += "小項目□追加: " + result.kokomokuFixed + "件\n";
-        resultMsg += "図内コード・コマンド: " + (result.codeStyleApplied || 0) + "段落\n";
-        resultMsg += "フォント置換: " + (result.fontsReplaced || 0) + "件\n";
-        resultMsg += "表フォント更新: " + (result.tableFontsUpdated || 0) + "文字\n";
-        resultMsg += "処理時間: " + duration.toFixed(1) + "秒";
-
-        // 埋め込みオブジェクトの問題がある場合は警告を追加
-        if (result.embeddedObjectIssues && result.embeddedObjectIssues > 0) {
-            resultMsg += "\n\n⚠ 警告: " + result.embeddedObjectIssues + "件の埋め込みオブジェクト問題を検出\n";
-            resultMsg += "（□のみの段落がある場合、Wordの埋め込み表が\n";
-            resultMsg += "変換できなかった可能性があります。\n";
-            resultMsg += "Wordで表を選択→右クリック→「表に変換」後、\n";
-            resultMsg += "再度インポートしてください）";
-        }
-
-        alert(resultMsg);
-
-        // 前処理で作成した一時ファイルを削除
-        cleanupPreprocessedFile(processedWordPath, originalWordPath);
-
-    } catch (e) {
-        app.scriptPreferences.enableRedraw = true;
-        // エラー時も一時ファイルを削除
-        cleanupPreprocessedFile(processedWordPath, originalWordPath);
-        alert("エラー:\n\n" + e.message + "\n\n行: " + e.line);
-    }
-}
-
-// マスターページ一覧を取得
-function listMasterPages(doc) {
-    var list = [];
-    for (var i = 0; i < doc.masterSpreads.length; i++) {
-        list.push(doc.masterSpreads[i].name);
-    }
-    return list.join("\n");
-}
-
-// マスターページを取得
-function getMasterPage(doc, masterName) {
-    try {
-        var master = doc.masterSpreads.itemByName(masterName);
-        if (master.isValid) {
-            return master;
-        }
-    } catch (e) {}
-    return null;
-}
-
-// Word文書をインポート
 function importWordDocument(doc, wordFile, master) {
     var result = {
         spreadsCreated: 0,
         paragraphsImported: 0,
         stylesApplied: 0,
         kokomokuFixed: 0,
-        importedStory: null  // インポートしたストーリーを記録
+        importedStory: null
     };
 
-    // 最後のページを取得
     var lastPage = doc.pages[doc.pages.length - 1];
-
-    // テキストフレームを取得または作成
     var textFrame = getOrCreateTextFrame(doc, lastPage);
 
     if (!textFrame) {
@@ -470,30 +108,22 @@ function importWordDocument(doc, wordFile, master) {
 
     debugLog("テキストフレームを取得: " + textFrame.id);
 
-    // Word文書を配置
     try {
-        // Wordインポート設定を構成
         configureWordImportPreferences();
-
         textFrame.place(wordFile);
         debugLog("Word文書を配置完了");
 
-        // インポートしたストーリーを記録
         result.importedStory = textFrame.parentStory;
         debugLog("インポートしたストーリーID: " + result.importedStory.id);
 
-        // インポートされた表の数を確認
         var tableCount = result.importedStory.tables.length;
         debugLog("インポートされた表の数: " + tableCount);
 
-        // 埋め込みオブジェクトの問題を検出（□文字の孤立をチェック）
         result.embeddedObjectIssues = detectEmbeddedObjectIssues(result.importedStory);
-
     } catch (e) {
         throw new Error("Word文書の読み込み失敗: " + e.message);
     }
 
-    // オーバーフローしている場合、見開きページを自動追加
     if (textFrame.overflows && CONFIG.autoCreatePages) {
         debugLog("テキストがオーバーフロー、ページを追加します");
         result.spreadsCreated = autoFlowWithSpreads(doc, textFrame, master);
@@ -504,22 +134,22 @@ function importWordDocument(doc, wordFile, master) {
     return result;
 }
 
-// テキストフレームを取得または作成
+// ============================================================
+// テキストフレーム管理
+// ============================================================
+
 function getOrCreateTextFrame(doc, page) {
-    // まずマスターページのテキストフレームをオーバーライド
     var masterFrame = overrideMasterTextFrame(page);
     if (masterFrame) {
         debugLog("マスターフレームをオーバーライド");
         return masterFrame;
     }
 
-    // マスターフレームがない場合、ページ上の最大のテキストフレームを探す
     var textFrames = page.textFrames;
     var largestFrame = null;
     var largestArea = 0;
 
     for (var i = 0; i < textFrames.length; i++) {
-        // 既に連結されているフレームはスキップ
         if (textFrames[i].previousTextFrame) {
             continue;
         }
@@ -538,12 +168,10 @@ function getOrCreateTextFrame(doc, page) {
         return largestFrame;
     }
 
-    // テキストフレームがない場合は新規作成
     debugLog("新規テキストフレームを作成");
     return createTextFrame(doc, page);
 }
 
-// マスターページのテキストフレームをオーバーライド
 function overrideMasterTextFrame(page) {
     try {
         var appliedMaster = page.appliedMaster;
@@ -552,13 +180,11 @@ function overrideMasterTextFrame(page) {
             return null;
         }
 
-        // ページ上のすべてのマスターアイテムをオーバーライド
         try {
             page.overrideAll();
 
             var textFrames = page.textFrames;
 
-            // 連結されていない最初のテキストフレームを返す
             for (var i = 0; i < textFrames.length; i++) {
                 if (!textFrames[i].previousTextFrame) {
                     return textFrames[i];
@@ -572,7 +198,6 @@ function overrideMasterTextFrame(page) {
             debugLog("overrideAll失敗: " + e.message);
         }
 
-        // 手動でオーバーライド
         var masterPages = appliedMaster.pages;
 
         for (var i = 0; i < masterPages.length; i++) {
@@ -598,7 +223,6 @@ function overrideMasterTextFrame(page) {
     return null;
 }
 
-// テキストフレームを新規作成
 function createTextFrame(doc, page) {
     var pageWidth = doc.documentPreferences.pageWidth;
     var pageHeight = doc.documentPreferences.pageHeight;
@@ -629,7 +253,6 @@ function createTextFrame(doc, page) {
     return page.textFrames.add({geometricBounds: bounds});
 }
 
-// 見開き単位でページを自動追加
 function autoFlowWithSpreads(doc, startFrame, master) {
     var spreadsCreated = 0;
     var currentFrame = startFrame;
@@ -638,13 +261,11 @@ function autoFlowWithSpreads(doc, startFrame, master) {
     while (currentFrame.overflows && loopCount < CONFIG.maxSpreads) {
         loopCount++;
 
-        // 新しい見開きを追加
         var newSpread = doc.spreads.add(LocationOptions.AT_END);
         spreadsCreated++;
 
         debugLog("見開き " + spreadsCreated + " を追加");
 
-        // マスターページを適用
         try {
             newSpread.appliedMaster = master;
         } catch (e) {
@@ -657,19 +278,16 @@ function autoFlowWithSpreads(doc, startFrame, master) {
             break;
         }
 
-        // 見開きの各ページにテキストフレームを連結
         for (var i = 0; i < pages.length; i++) {
             var pageFrame = getOrCreateTextFrame(doc, pages[i]);
 
             if (pageFrame) {
                 try {
-                    // 前のフレームと連結
                     pageFrame.previousTextFrame = currentFrame;
                     currentFrame = pageFrame;
 
                     debugLog("ページ " + pages[i].name + " にフレームを連結");
 
-                    // オーバーフローがなくなったら終了
                     if (!currentFrame.overflows) {
                         debugLog("オーバーフロー解消");
                         break;
@@ -681,7 +299,6 @@ function autoFlowWithSpreads(doc, startFrame, master) {
             }
         }
 
-        // 最後のフレームに移動
         while (currentFrame.nextTextFrame) {
             currentFrame = currentFrame.nextTextFrame;
         }
@@ -691,11 +308,14 @@ function autoFlowWithSpreads(doc, startFrame, master) {
     return spreadsCreated;
 }
 
-// スタイルマッピングを適用（インポートしたストーリーのみ）
+// ============================================================
+// スタイル変換
+// ============================================================
+
 function applyStyleMapping(doc, importedStory) {
     var mappingCount = 0;
 
-    debugLog("=== スタイルマッピング開始（インポートしたストーリーのみ） ===");
+    debugLog("=== スタイルマッピング開始 ===");
 
     if (!importedStory || !importedStory.isValid) {
         debugLog("有効なストーリーがありません");
@@ -708,14 +328,12 @@ function applyStyleMapping(doc, importedStory) {
         var para = paragraphs[j];
         var currentStyleName = para.appliedParagraphStyle.name;
 
-        // スタイルマッピングに該当するか確認
         if (CONFIG.styleMapping.hasOwnProperty(currentStyleName)) {
             var targetStyleName = CONFIG.styleMapping[currentStyleName];
 
             try {
                 var targetStyle = doc.paragraphStyles.itemByName(targetStyleName);
                 if (targetStyle.isValid) {
-                    // 大項目→大見出し1の場合、先頭の■を削除
                     if (currentStyleName === "大項目" && targetStyleName === "大見出し1") {
                         removeLeadingSymbol(para, "■");
                     }
@@ -739,26 +357,21 @@ function applyStyleMapping(doc, importedStory) {
     return mappingCount;
 }
 
-// 段落先頭の記号を削除
 function removeLeadingSymbol(para, symbol) {
     try {
         var paraText = para.contents;
 
-        // 先頭が指定記号で始まっている場合
         if (paraText.indexOf(symbol) === 0) {
-            // 記号とその後のスペース（全角・半角）を削除
             var newText = paraText.substring(1);
-            // 先頭のスペースも削除
             newText = newText.replace(/^[\s　]+/, "");
             para.contents = newText;
-            debugLog("■記号を削除: " + symbol);
+            debugLog("■記号を削除");
         }
     } catch (e) {
         debugLog("記号削除エラー: " + e.message);
     }
 }
 
-// 小項目に□記号を追加（インポートしたストーリーのみ）
 function addKokomokuSymbol(doc, importedStory) {
     var addCount = 0;
     var skippedCount = 0;
@@ -774,7 +387,7 @@ function addKokomokuSymbol(doc, importedStory) {
         return 0;
     }
 
-    debugLog("=== 小項目に□記号を追加開始（インポートしたストーリーのみ） ===");
+    debugLog("=== 小項目に□記号を追加開始 ===");
 
     var symbol = CONFIG.kokomokuSymbol;
     var paragraphs = importedStory.paragraphs;
@@ -786,41 +399,33 @@ function addKokomokuSymbol(doc, importedStory) {
             try {
                 var paraText = para.contents;
 
-                // 既に□で始まっている場合はスキップ
                 if (paraText.indexOf("□") === 0) {
                     debugLog("既に□あり: 段落 " + j);
                     continue;
                 }
 
-                // 段落内に表やインラインオブジェクトがあるかチェック
-                // InDesignでは表やオブジェクトは特殊文字（制御文字）として表現される
                 var hasInlineObjects = false;
 
-                // 表のチェック
                 if (para.tables && para.tables.length > 0) {
                     hasInlineObjects = true;
                     debugLog("警告: 段落 " + j + " に表が含まれています - スキップ");
                 }
 
-                // インラインオブジェクトや特殊文字のチェック
-                // 制御文字（U+0000-U+001F, U+FFFC等）が含まれている場合はスキップ
                 if (!hasInlineObjects) {
                     for (var c = 0; c < paraText.length; c++) {
                         var charCode = paraText.charCodeAt(c);
-                        // OBJECT REPLACEMENT CHARACTER (U+FFFC) や制御文字をチェック
                         if (charCode === 0xFFFC || charCode < 0x0020 && charCode !== 0x0009 && charCode !== 0x000A && charCode !== 0x000D) {
                             hasInlineObjects = true;
-                            debugLog("警告: 段落 " + j + " にインラインオブジェクト文字を検出 (charCode: " + charCode + ") - スキップ");
+                            debugLog("警告: 段落 " + j + " にインラインオブジェクトを検出 - スキップ");
                             break;
                         }
                     }
                 }
 
-                // 空または空白のみの段落はスキップ（表アンカーの可能性）
                 var trimmedText = paraText.replace(/[\s\r\n　]/g, "");
                 if (trimmedText.length === 0) {
                     skippedCount++;
-                    debugLog("空の小項目段落をスキップ: 段落 " + j + " (表アンカーの可能性)");
+                    debugLog("空の小項目段落をスキップ: 段落 " + j);
                     continue;
                 }
 
@@ -829,12 +434,10 @@ function addKokomokuSymbol(doc, importedStory) {
                     continue;
                 }
 
-                // 段落の先頭に□記号を挿入（insertionPointを使用してアンカーを保護）
                 try {
                     para.insertionPoints[0].contents = symbol;
                     addCount++;
                 } catch (insertError) {
-                    // insertionPointが使えない場合は従来の方法にフォールバック
                     para.contents = symbol + paraText;
                     addCount++;
                 }
@@ -850,13 +453,15 @@ function addKokomokuSymbol(doc, importedStory) {
 
     debugLog("小項目□記号追加完了: " + addCount + "件");
     if (skippedCount > 0) {
-        debugLog("スキップした段落: " + skippedCount + "件 (インラインオブジェクトまたは空)");
+        debugLog("スキップした段落: " + skippedCount + "件");
     }
     return addCount;
 }
 
-// フォント置換（インポートしたストーリーのみ）
-// MS明朝 Bold → BIZ UDゴシック Regular
+// ============================================================
+// フォント置換
+// ============================================================
+
 function replaceFonts(importedStory) {
     var replaceCount = 0;
 
@@ -865,9 +470,8 @@ function replaceFonts(importedStory) {
         return 0;
     }
 
-    debugLog("=== フォント置換開始（インポートしたストーリーのみ） ===");
+    debugLog("=== フォント置換開始 ===");
 
-    // 置換先フォントを取得
     var targetFont;
     try {
         targetFont = app.fonts.itemByName("BIZ UDGothic\tRegular");
@@ -886,7 +490,6 @@ function replaceFonts(importedStory) {
 
     debugLog("置換先フォント: " + targetFont.name);
 
-    // テキストを走査してフォントを置換
     try {
         var characters = importedStory.characters;
 
@@ -895,19 +498,14 @@ function replaceFonts(importedStory) {
                 var ch = characters[i];
                 var fontName = ch.appliedFont.name;
 
-                // MS明朝 Bold を検出（様々な表記に対応）
                 if (fontName.indexOf("MS") >= 0 && fontName.indexOf("明朝") >= 0 && fontName.indexOf("Bold") >= 0) {
                     ch.appliedFont = targetFont;
                     replaceCount++;
-                }
-                // ＭＳ 明朝 Bold（全角）
-                else if (fontName.indexOf("ＭＳ") >= 0 && fontName.indexOf("明朝") >= 0 && fontName.indexOf("Bold") >= 0) {
+                } else if (fontName.indexOf("ＭＳ") >= 0 && fontName.indexOf("明朝") >= 0 && fontName.indexOf("Bold") >= 0) {
                     ch.appliedFont = targetFont;
                     replaceCount++;
                 }
-            } catch (e) {
-                // 個別の文字エラーは無視
-            }
+            } catch (e) {}
         }
     } catch (e) {
         debugLog("フォント置換エラー: " + e.message);
@@ -917,15 +515,12 @@ function replaceFonts(importedStory) {
     return replaceCount;
 }
 
-// 既存ドキュメントのすべての表のフォントを更新
-// MS明朝（Regular/Bold問わず）→ BIZ UDゴシック Regular
 function updateAllTableFonts(doc) {
     var replaceCount = 0;
     var tableCount = 0;
 
-    debugLog("=== 既存ドキュメントの全表フォント更新開始 ===");
+    debugLog("=== 全表フォント更新開始 ===");
 
-    // 置換先フォントを取得
     var targetFont;
     try {
         targetFont = app.fonts.itemByName("BIZ UDGothic\tRegular");
@@ -944,11 +539,9 @@ function updateAllTableFonts(doc) {
 
     debugLog("置換先フォント: " + targetFont.name);
 
-    // ドキュメント内のすべてのストーリーを走査
     for (var s = 0; s < doc.stories.length; s++) {
         var story = doc.stories[s];
 
-        // ストーリー内のすべてのテーブルを走査
         var tables = story.tables;
         for (var t = 0; t < tables.length; t++) {
             var table = tables[t];
@@ -956,12 +549,10 @@ function updateAllTableFonts(doc) {
 
             debugLog("表 " + tableCount + " を処理中...");
 
-            // テーブル内のすべてのセルを走査
             var cells = table.cells;
             for (var c = 0; c < cells.length; c++) {
                 var cell = cells[c];
 
-                // セル内のすべての文字を走査
                 try {
                     var characters = cell.characters;
                     for (var i = 0; i < characters.length; i++) {
@@ -969,7 +560,6 @@ function updateAllTableFonts(doc) {
                             var ch = characters[i];
                             var fontName = ch.appliedFont.name;
 
-                            // MS明朝を検出（Regular/Bold問わず）
                             var isMincho = false;
                             if (fontName.indexOf("MS") >= 0 && fontName.indexOf("明朝") >= 0) {
                                 isMincho = true;
@@ -983,9 +573,7 @@ function updateAllTableFonts(doc) {
                                 ch.appliedFont = targetFont;
                                 replaceCount++;
                             }
-                        } catch (e) {
-                            // 個別の文字エラーは無視
-                        }
+                        } catch (e) {}
                     }
                 } catch (e) {
                     debugLog("セル処理エラー: " + e.message);
@@ -998,19 +586,20 @@ function updateAllTableFonts(doc) {
     return replaceCount;
 }
 
-// アンカードオブジェクト（図）内のテキストに「コード・コマンド」スタイルを適用
-// Wordのテキストボックスはアンカードオブジェクトとしてインポートされる
+// ============================================================
+// アンカードオブジェクト処理
+// ============================================================
+
 function applyCodeStyleToAnchoredObjects(doc, importedStory) {
     var styleApplied = 0;
 
-    debugLog("=== アンカードオブジェクト内テキストにコード・コマンドスタイル適用開始 ===");
+    debugLog("=== アンカードオブジェクト内テキストにスタイル適用開始 ===");
 
     if (!importedStory || !importedStory.isValid) {
         debugLog("有効なストーリーがありません");
         return 0;
     }
 
-    // 「コード・コマンド」スタイルを取得
     var codeStyle;
     try {
         codeStyle = doc.paragraphStyles.itemByName("コード・コマンド");
@@ -1025,7 +614,6 @@ function applyCodeStyleToAnchoredObjects(doc, importedStory) {
 
     debugLog("「コード・コマンド」スタイルを使用します");
 
-    // ストーリー内のすべてのテキストフレームを取得
     var textContainers = importedStory.textContainers;
 
     for (var i = 0; i < textContainers.length; i++) {
@@ -1035,14 +623,11 @@ function applyCodeStyleToAnchoredObjects(doc, importedStory) {
             continue;
         }
 
-        // このテキストフレーム内のアンカードオブジェクトを検索
         try {
             var allPageItems = container.allPageItems;
 
             for (var j = 0; j < allPageItems.length; j++) {
                 var item = allPageItems[j];
-
-                // アンカードオブジェクト（グループまたはテキストフレーム）を処理
                 styleApplied += processAnchoredItem(item, codeStyle);
             }
         } catch (e) {
@@ -1050,21 +635,17 @@ function applyCodeStyleToAnchoredObjects(doc, importedStory) {
         }
     }
 
-    // ストーリー内のインライングラフィックスも処理
     try {
         var paragraphs = importedStory.paragraphs;
         for (var p = 0; p < paragraphs.length; p++) {
             try {
                 var para = paragraphs[p];
-                // 段落内のすべてのページアイテム（インライングラフィックス含む）
                 if (para.allPageItems && para.allPageItems.length > 0) {
                     for (var k = 0; k < para.allPageItems.length; k++) {
                         styleApplied += processAnchoredItem(para.allPageItems[k], codeStyle);
                     }
                 }
-            } catch (e) {
-                // 個別エラーは無視
-            }
+            } catch (e) {}
         }
     } catch (e) {
         debugLog("段落内アイテム処理エラー: " + e.message);
@@ -1074,32 +655,24 @@ function applyCodeStyleToAnchoredObjects(doc, importedStory) {
     return styleApplied;
 }
 
-// 個別のアンカードアイテムを処理
 function processAnchoredItem(item, codeStyle) {
     var styleApplied = 0;
 
     try {
-        // グループの場合は再帰的に処理
         if (item.constructor.name === "Group") {
             var groupItems = item.allPageItems;
             for (var i = 0; i < groupItems.length; i++) {
                 styleApplied += processAnchoredItem(groupItems[i], codeStyle);
             }
-        }
-        // テキストフレームの場合
-        else if (item.constructor.name === "TextFrame") {
-            // このテキストフレームがアンカードかどうかを確認
-            // または親ストーリーと異なるストーリーを持つ場合（図内のテキスト）
+        } else if (item.constructor.name === "TextFrame") {
             var textFrame = item;
 
-            // テキストフレーム内のすべての段落にスタイルを適用
             try {
                 var paragraphs = textFrame.paragraphs;
 
                 for (var p = 0; p < paragraphs.length; p++) {
                     try {
                         var para = paragraphs[p];
-                        // 空の段落はスキップ
                         var content = para.contents.replace(/[\r\n\s　]/g, "");
                         if (content.length === 0) {
                             continue;
@@ -1111,16 +684,12 @@ function processAnchoredItem(item, codeStyle) {
                         if (styleApplied <= 5) {
                             debugLog("図内テキストにスタイル適用: " + para.contents.substring(0, 30) + "...");
                         }
-                    } catch (e) {
-                        // 個別段落エラーは無視
-                    }
+                    } catch (e) {}
                 }
             } catch (e) {
                 debugLog("テキストフレーム処理エラー: " + e.message);
             }
-        }
-        // 矩形やその他の形状内にテキストがある場合
-        else if (item.contentType === ContentType.TEXT_TYPE) {
+        } else if (item.contentType === ContentType.TEXT_TYPE) {
             try {
                 var paragraphs = item.paragraphs;
                 for (var p = 0; p < paragraphs.length; p++) {
@@ -1132,22 +701,37 @@ function processAnchoredItem(item, codeStyle) {
                         }
                         para.appliedParagraphStyle = codeStyle;
                         styleApplied++;
-                    } catch (e) {
-                        // 個別段落エラーは無視
-                    }
+                    } catch (e) {}
                 }
-            } catch (e) {
-                // エラーは無視
-            }
+            } catch (e) {}
         }
-    } catch (e) {
-        // アイテム処理エラーは無視
-    }
+    } catch (e) {}
 
     return styleApplied;
 }
 
-// 段落数をカウント
+// ============================================================
+// ユーティリティ
+// ============================================================
+
+function listMasterPages(doc) {
+    var list = [];
+    for (var i = 0; i < doc.masterSpreads.length; i++) {
+        list.push(doc.masterSpreads[i].name);
+    }
+    return list.join("\n");
+}
+
+function getMasterPage(doc, masterName) {
+    try {
+        var master = doc.masterSpreads.itemByName(masterName);
+        if (master.isValid) {
+            return master;
+        }
+    } catch (e) {}
+    return null;
+}
+
 function countParagraphs(doc) {
     var count = 0;
     for (var i = 0; i < doc.stories.length; i++) {
@@ -1156,5 +740,98 @@ function countParagraphs(doc) {
     return count;
 }
 
-// スクリプト実行
+// ============================================================
+// メイン処理
+// ============================================================
+
+function main() {
+    if (app.documents.length === 0) {
+        alert("InDesignドキュメントを開いてからスクリプトを実行してください。");
+        return;
+    }
+
+    var doc = app.activeDocument;
+
+    var hMaster = getMasterPage(doc, CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName);
+    if (!hMaster) {
+        alert("エラー: 「" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "」マスターページが見つかりません。\n\n使用可能なマスターページ:\n" + listMasterPages(doc));
+        return;
+    }
+
+    debugLog("使用マスター: " + hMaster.name);
+
+    var wordFile = File.openDialog("インポートするWord文書を選択してください (.docx)", "*.docx");
+    if (!wordFile) {
+        return;
+    }
+
+    var confirmMsg = "Word文書をインポートします\n\n";
+    confirmMsg += "【段落スタイル変換】\n";
+    confirmMsg += "・大項目 → 大見出し1 (■削除)\n";
+    confirmMsg += "・小項目 → 小項目 (□記号保持)\n";
+    confirmMsg += "・標準/Normal → Normal\n";
+    confirmMsg += "・演習タイトル → 演習タイトル\n";
+    confirmMsg += "・図表番号 → 図番号\n";
+    confirmMsg += "・リスト → リスト\n";
+    confirmMsg += "・番号 → 番号リスト\n";
+    confirmMsg += "・図内テキスト → コード・コマンド\n\n";
+    confirmMsg += "【表のフォント更新】\n";
+    confirmMsg += "・既存ドキュメントの全表: MS明朝 → BIZ UDゴシック\n\n";
+    confirmMsg += "【マスターページ】\n";
+    confirmMsg += "・" + CONFIG.masterPagePrefix + "-" + CONFIG.masterPageName + "\n\n";
+    confirmMsg += "実行しますか?";
+
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    try {
+        app.scriptPreferences.enableRedraw = false;
+
+        var startTime = new Date();
+        var initialPageCount = doc.pages.length;
+
+        var result = importWordDocument(doc, wordFile, hMaster);
+
+        if (result.importedStory) {
+            result.stylesApplied = applyStyleMapping(doc, result.importedStory);
+            result.kokomokuFixed = addKokomokuSymbol(doc, result.importedStory);
+            result.fontsReplaced = replaceFonts(result.importedStory);
+            result.codeStyleApplied = applyCodeStyleToAnchoredObjects(doc, result.importedStory);
+        }
+
+        result.tableFontsUpdated = updateAllTableFonts(doc);
+
+        var endTime = new Date();
+        var duration = (endTime - startTime) / 1000;
+
+        app.scriptPreferences.enableRedraw = true;
+
+        var resultMsg = "完了!\n\n";
+        resultMsg += "既存ページ: " + initialPageCount + "p\n";
+        resultMsg += "追加見開き: " + result.spreadsCreated + "\n";
+        resultMsg += "段落数: " + result.paragraphsImported + "\n";
+        resultMsg += "スタイル変換: " + result.stylesApplied + "件\n";
+        resultMsg += "小項目□追加: " + result.kokomokuFixed + "件\n";
+        resultMsg += "図内コード・コマンド: " + (result.codeStyleApplied || 0) + "段落\n";
+        resultMsg += "フォント置換: " + (result.fontsReplaced || 0) + "件\n";
+        resultMsg += "表フォント更新: " + (result.tableFontsUpdated || 0) + "文字\n";
+        resultMsg += "処理時間: " + duration.toFixed(1) + "秒";
+
+        if (result.embeddedObjectIssues && result.embeddedObjectIssues > 0) {
+            resultMsg += "\n\n⚠ 警告: " + result.embeddedObjectIssues + "件の埋め込みオブジェクト問題を検出\n";
+            resultMsg += "（□のみの段落がある場合、Wordの埋め込み表が\n";
+            resultMsg += "変換できなかった可能性があります。\n";
+            resultMsg += "Wordで表を選択→右クリック→「表に変換」後、\n";
+            resultMsg += "再度インポートしてください）";
+        }
+
+        alert(resultMsg);
+
+    } catch (e) {
+        app.scriptPreferences.enableRedraw = true;
+        alert("エラー:\n\n" + e.message + "\n\n行: " + e.line);
+    }
+}
+
 main();
