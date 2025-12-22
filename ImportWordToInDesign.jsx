@@ -1,12 +1,10 @@
-// ImportWordToInDesign.jsx
-// Word文書をInDesignにインポートし、段落スタイルを変換するスクリプト
-// InDesign 2025対応版
+// InDesign 2025でテスト
 
 #target indesign
 
-// ============================================================
+
 // 設定
-// ============================================================
+
 
 var CONFIG = {
     autoCreatePages: true,
@@ -42,9 +40,10 @@ function debugLog(message) {
     }
 }
 
-// ============================================================
-// Wordインポート
-// ============================================================
+
+// wordインポート
+
+
 
 function configureWordImportPreferences() {
     try {
@@ -134,14 +133,14 @@ function importWordDocument(doc, wordFile, master) {
     return result;
 }
 
-// ============================================================
+
 // テキストフレーム管理
-// ============================================================
+
 
 function getOrCreateTextFrame(doc, page) {
     var masterFrame = overrideMasterTextFrame(page);
     if (masterFrame) {
-        debugLog("マスターフレームをオーバーライド");
+        debugLog("マスターページのテキストフレームをオーバーライド");
         return masterFrame;
     }
 
@@ -217,7 +216,7 @@ function overrideMasterTextFrame(page) {
         }
 
     } catch (e) {
-        debugLog("マスターオーバーライドエラー: " + e.message);
+        debugLog("マスターページオーバーライドエラー: " + e.message);
     }
 
     return null;
@@ -308,9 +307,9 @@ function autoFlowWithSpreads(doc, startFrame, master) {
     return spreadsCreated;
 }
 
-// ============================================================
+
 // スタイル変換
-// ============================================================
+
 
 function applyStyleMapping(doc, importedStory) {
     var mappingCount = 0;
@@ -458,9 +457,9 @@ function addKokomokuSymbol(doc, importedStory) {
     return addCount;
 }
 
-// ============================================================
+
 // フォント置換
-// ============================================================
+
 
 function replaceFonts(importedStory) {
     var replaceCount = 0;
@@ -586,9 +585,9 @@ function updateAllTableFonts(doc) {
     return replaceCount;
 }
 
-// ============================================================
+
 // 表セルスタイル処理
-// ============================================================
+
 
 function applyCodeStyleToTableCells(doc, importedStory) {
     var styleApplied = 0;
@@ -654,14 +653,14 @@ function applyCodeStyleToTableCells(doc, importedStory) {
     return styleApplied;
 }
 
-// ============================================================
-// アンカードオブジェクト処理
-// ============================================================
+
+// アンカーオブジェクト処理
+
 
 function applyCodeStyleToAnchoredObjects(doc, importedStory) {
     var styleApplied = 0;
 
-    debugLog("=== アンカードオブジェクト内テキストにスタイル適用開始 ===");
+    debugLog("=== アンカーオブジェクト内テキストにスタイル適用開始 ===");
 
     if (!importedStory || !importedStory.isValid) {
         debugLog("有効なストーリーがありません");
@@ -699,7 +698,7 @@ function applyCodeStyleToAnchoredObjects(doc, importedStory) {
                 styleApplied += processAnchoredItem(item, codeStyle);
             }
         } catch (e) {
-            debugLog("アンカードオブジェクト検索エラー: " + e.message);
+            debugLog("アンカーオブジェクト検索エラー: " + e.message);
         }
     }
 
@@ -719,7 +718,7 @@ function applyCodeStyleToAnchoredObjects(doc, importedStory) {
         debugLog("段落内アイテム処理エラー: " + e.message);
     }
 
-    debugLog("アンカードオブジェクト内テキストスタイル適用完了: " + styleApplied + "段落");
+    debugLog("アンカーオブジェクト内テキストスタイル適用完了: " + styleApplied + "段落");
     return styleApplied;
 }
 
@@ -778,9 +777,9 @@ function processAnchoredItem(item, codeStyle) {
     return styleApplied;
 }
 
-// ============================================================
-// ユーティリティ
-// ============================================================
+
+// util（ドキュメント情報の取得）
+
 
 function listMasterPages(doc) {
     var list = [];
@@ -808,9 +807,9 @@ function countParagraphs(doc) {
     return count;
 }
 
-// ============================================================
+
 // メイン処理
-// ============================================================
+
 
 function main() {
     if (app.documents.length === 0) {
